@@ -13,61 +13,85 @@ const cache = new LRUCache({
   ttl: 1000 * 30
 })
 
+
 // ============================================================
-// 网易云 Cloudflare Workers AES-ECB 修复
+// 网易云 EAPI AES-ECB 修复
 // ============================================================
 
 const patchNeteaseEapiEncrypt = (meting) => {
   const provider = meting?.provider
 
-  if (!provider || provider.name !== 'netease') return
+  if (!provider || provider.name !== 'netease') {
+    return
+  }
 
   const proto = Object.getPrototypeOf(provider)
 
-  if (proto.__patchedEapi) return
+  if (proto.__patchedEapi) {
+    return
+  }
 
   proto.__patchedEapi = true
 
   proto.eapiEncrypt = (req) => {
     const bodyStr = JSON.stringify(req.body)
-    const path = req.url.replace(/https?:\/\/[^/]+/, '')
+
+    const path =
+      req.url.replace(
+        /https?:\/\/[^/]+/,
+        ''
+      )
 
     const signSeed =
       `nobody${path}use${bodyStr}md5forencrypt`
 
-    const sign = createHash('md5')
-      .update(signSeed)
-      .digest('hex')
+    const sign =
+      createHash('md5')
+        .update(signSeed)
+        .digest('hex')
 
     const payload =
       `${path}-36cd479b6b5-${bodyStr}-36cd479b6b5-${sign}`
 
-    const key = Buffer.from(
-      'e82ckenh8dichen8',
-      'utf8'
-    )
+    const key =
+      Buffer.from(
+        'e82ckenh8dichen8',
+        'utf8'
+      )
 
-    const textBytes = Buffer.from(
-      payload,
-      'utf8'
-    )
+    const textBytes =
+      Buffer.from(
+        payload,
+        'utf8'
+      )
 
     const padded =
-      aesjs.padding.pkcs7.pad(textBytes)
+      aesjs.padding.pkcs7.pad(
+        textBytes
+      )
 
     const aesEcb =
-      new aesjs.ModeOfOperation.ecb(key)
+      new aesjs.ModeOfOperation.ecb(
+        key
+      )
 
     const encryptedBytes =
-      aesEcb.encrypt(padded)
+      aesEcb.encrypt(
+        padded
+      )
 
     const encryptedHex =
-      Buffer.from(encryptedBytes)
+      Buffer.from(
+        encryptedBytes
+      )
         .toString('hex')
         .toUpperCase()
 
     req.url =
-      req.url.replace('/api/', '/eapi/')
+      req.url.replace(
+        '/api/',
+        '/eapi/'
+      )
 
     req.body = {
       params: encryptedHex
@@ -79,7 +103,7 @@ const patchNeteaseEapiEncrypt = (meting) => {
 
 
 // ============================================================
-// QQ 音乐请求公共 Header
+// QQ Music 请求 Header
 // ============================================================
 
 const QQ_HEADERS = {
@@ -89,41 +113,51 @@ const QQ_HEADERS = {
   'Referer':
     'https://y.qq.com/',
 
+  'Origin':
+    'https://y.qq.com',
+
   'Accept':
     'application/json, text/plain, */*'
 }
 
 
 // ============================================================
-// QQ 音乐：新版搜索
+// QQ Music 搜索
 //
-// QQ 旧的 c.y.qq.com 搜索接口已经容易出现空结果。
-// 新接口：
-// https://u.y.qq.com/cgi-bin/musicu.fcg
+// 使用 QQ Music 当前 musicu.fcg 搜索接口
 //
-// DoSearchForQQMusicDesktop
+// search:
+// {
+//   "music.search.SearchCgiService": {
+//     "module": "music.search.SearchCgiService",
+//     "method": "DoSearchForQQMusicDesktop",
+//     "param": {
+//       "search_type": 0,
+//       "query": "周杰伦",
+//       "page_num": 1,
+//       "num_per_page": 20
+//     }
+//   }
+// }
 // ============================================================
 
-async function tencentSearch(keyword, cookie = '') {
+async function tencentSearch(
+  keyword,
+  cookie = ''
+) {
   const body = {
-    comm: {
-      ct: 19,
-      cv: '1859',
-      uin: '0'
-    },
-
-    req: {
-      method: 'DoSearchForQQMusicDesktop',
-
+    search: {
       module:
         'music.search.SearchCgiService',
 
+      method:
+        'DoSearchForQQMusicDesktop',
+
       param: {
-        grp: 1,
-        num_per_page: 20,
-        page_num: 1,
+        search_type: 0,
         query: keyword,
-        search_type: 0
+        page_num: 1,
+        num_per_page: 20
       }
     }
   }
@@ -138,27 +172,34 @@ async function tencentSearch(keyword, cookie = '') {
     headers.Cookie = cookie
   }
 
-  const response = await fetch(
-    'https://u.y.qq.com/cgi-bin/musicu.fcg',
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
-    }
-  )
+  const response =
+    await fetch(
+      'https://u.y.qq.com/cgi-bin/musicu.fcg',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      }
+    )
 
   if (!response.ok) {
     throw new Error(
-      `QQ搜索 HTTP ${response.status}`
+      `QQ音乐搜索 HTTP ${response.status}`
     )
   }
 
-  const result = await response.json()
+  const result =
+    await response.json()
 
   const song =
-    result?.req?.data?.body?.song
+    result?.search?.data?.body?.song
 
   if (!song) {
+    console.error(
+      'QQ Music search response:',
+      JSON.stringify(result)
+    )
+
     return []
   }
 
@@ -167,48 +208,87 @@ async function tencentSearch(keyword, cookie = '') {
       ? song.list
       : []
 
-  return list.map((item) => {
-    const singer =
-      Array.isArray(item.singer)
-        ? item.singer
-            .map(x => x.name)
-            .filter(Boolean)
-            .join(' / ')
-        : ''
+  return list
+    .map(item => {
+      const artist =
+        Array.isArray(item.singer)
+          ? item.singer
+              .map(
+                singer =>
+                  singer?.name || ''
+              )
+              .filter(Boolean)
+              .join(' / ')
+          : ''
 
-    const albumMid =
-      item.album?.mid ||
-      item.albummid ||
-      ''
+      const songMid =
+        item.mid ||
+        item.songmid ||
+        ''
 
-    const songMid =
-      item.mid ||
-      item.songmid ||
-      ''
+      const albumMid =
+        item.album?.mid ||
+        item.albummid ||
+        ''
 
-    return {
-      name: item.name || '',
-      artist: singer,
-      url_id: songMid,
-      pic_id: albumMid,
-      lyric_id: songMid
-    }
-  }).filter(item => item.url_id)
+      return {
+        name:
+          item.name || '',
+
+        artist,
+
+        url_id:
+          songMid,
+
+        pic_id:
+          albumMid,
+
+        lyric_id:
+          songMid
+      }
+    })
+    .filter(
+      item =>
+        item.url_id
+    )
 }
 
 
 // ============================================================
-// QQ 音乐：新版播放地址
-//
-// API:
-// https://u.y.qq.com/cgi-bin/musicu.fcg
+// QQ Music 获取播放地址
 //
 // vkey.GetVkeyServer
 // CgiGetVkey
+//
+// 返回：sip[0] + midurlinfo[0].purl
 // ============================================================
 
-async function tencentUrl(songMid, cookie = '') {
+async function tencentUrl(
+  songMid,
+  cookie = ''
+) {
+  const guid =
+    String(
+      Math.floor(
+        1000000000 +
+        Math.random() *
+        9000000000
+      )
+    )
+
   const body = {
+    comm: {
+      cv: 4747474,
+      ct: 24,
+      format: 'json',
+      inCharset: 'utf-8',
+      outCharset: 'utf-8',
+      notice: 0,
+      platform: 'yqq.json',
+      needNewCode: 1,
+      uin: 0
+    },
+
     req_1: {
       module:
         'vkey.GetVkeyServer',
@@ -218,15 +298,10 @@ async function tencentUrl(songMid, cookie = '') {
 
       param: {
         filename: [
-          `M800${songMid}.mp3`
+          `C400${songMid}.m4a`
         ],
 
-        guid: String(
-          Math.floor(
-            1000000000 +
-            Math.random() * 9000000000
-          )
-        ),
+        guid,
 
         songmid: [
           songMid
@@ -242,15 +317,6 @@ async function tencentUrl(songMid, cookie = '') {
 
         platform: '20'
       }
-    },
-
-    loginUin: '0',
-
-    comm: {
-      uin: '0',
-      format: 'json',
-      ct: 24,
-      cv: 0
     }
   }
 
@@ -264,27 +330,34 @@ async function tencentUrl(songMid, cookie = '') {
     headers.Cookie = cookie
   }
 
-  const response = await fetch(
-    'https://u.y.qq.com/cgi-bin/musicu.fcg',
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
-    }
-  )
+  const response =
+    await fetch(
+      'https://u.y.qq.com/cgi-bin/musicu.fcg',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      }
+    )
 
   if (!response.ok) {
     throw new Error(
-      `QQ播放地址 HTTP ${response.status}`
+      `QQ音乐播放地址 HTTP ${response.status}`
     )
   }
 
-  const result = await response.json()
+  const result =
+    await response.json()
 
   const data =
     result?.req_1?.data
 
   if (!data) {
+    console.error(
+      'QQ Music vkey response:',
+      JSON.stringify(result)
+    )
+
     return ''
   }
 
@@ -298,18 +371,23 @@ async function tencentUrl(songMid, cookie = '') {
       ? data.midurlinfo
       : []
 
-  if (!sip.length || !midurlinfo.length) {
+  if (
+    sip.length === 0 ||
+    midurlinfo.length === 0
+  ) {
     return ''
   }
 
   const purl =
-    midurlinfo[0]?.purl || ''
+    midurlinfo[0]?.purl ||
+    ''
 
   if (!purl) {
     return ''
   }
 
-  let base = sip[0] || ''
+  let base =
+    sip[0] || ''
 
   if (
     !base.endsWith('/') &&
@@ -318,12 +396,26 @@ async function tencentUrl(songMid, cookie = '') {
     base += '/'
   }
 
-  return base + purl
+  let url =
+    base + purl
+
+  // 强制 HTTPS
+  if (
+    url.startsWith('http://')
+  ) {
+    url =
+      url.replace(
+        'http://',
+        'https://'
+      )
+  }
+
+  return url
 }
 
 
 // ============================================================
-// QQ 音乐：搜索结果统一格式
+// 生成 QQ 搜索结果
 // ============================================================
 
 function formatTencentSearchResult(
@@ -331,34 +423,35 @@ function formatTencentSearchResult(
   baseUrl,
   token
 ) {
-  return data.map(x => {
+  return data.map(item => {
     return {
-      title: x.name,
+      title:
+        item.name,
 
       author:
-        x.artist || '',
+        item.artist,
 
       url:
-        `${baseUrl}/api?server=tencent&type=url&id=${encodeURIComponent(x.url_id)}&auth=${auth(
+        `${baseUrl}/api?server=tencent&type=url&id=${encodeURIComponent(item.url_id)}&auth=${auth(
           'tencent',
           'url',
-          x.url_id,
+          item.url_id,
           token
         )}`,
 
       pic:
-        `${baseUrl}/api?server=tencent&type=pic&id=${encodeURIComponent(x.pic_id)}&auth=${auth(
+        `${baseUrl}/api?server=tencent&type=pic&id=${encodeURIComponent(item.pic_id)}&auth=${auth(
           'tencent',
           'pic',
-          x.pic_id,
+          item.pic_id,
           token
         )}`,
 
       lrc:
-        `${baseUrl}/api?server=tencent&type=lrc&id=${encodeURIComponent(x.lyric_id)}&auth=${auth(
+        `${baseUrl}/api?server=tencent&type=lrc&id=${encodeURIComponent(item.lyric_id)}&auth=${auth(
           'tencent',
           'lrc',
-          x.lyric_id,
+          item.lyric_id,
           token
         )}`
     }
@@ -367,7 +460,7 @@ function formatTencentSearchResult(
 
 
 // ============================================================
-// API 方法
+// Meting 方法
 // ============================================================
 
 const METING_METHODS = {
@@ -388,26 +481,35 @@ const METING_METHODS = {
 
 export default async (c) => {
   const config =
-    loadConfig(c.env, c.req.url)
+    loadConfig(
+      c.env,
+      c.req.url
+    )
 
   const baseUrl =
     config.meting.url ||
-    new URL(c.req.url).origin
+    new URL(
+      c.req.url
+    ).origin
 
   const token =
-    config.meting.token || 'token'
+    config.meting.token ||
+    'token'
 
   const query =
     c.req.query()
 
   const server =
-    query.server || 'netease'
+    query.server ||
+    'netease'
 
   const type =
-    query.type || 'search'
+    query.type ||
+    'search'
 
   const id =
-    query.id || 'hello'
+    query.id ||
+    'hello'
 
   const authToken =
     query.token ||
@@ -415,9 +517,9 @@ export default async (c) => {
     token
 
 
-  // ----------------------------------------------------------
-  // 参数检查
-  // ----------------------------------------------------------
+  // ==========================================================
+  // 参数验证
+  // ==========================================================
 
   if (
     ![
@@ -428,10 +530,13 @@ export default async (c) => {
       'kuwo'
     ].includes(server)
   ) {
-    throw new HTTPException(400, {
-      message:
-        'server 参数不合法'
-    })
+    throw new HTTPException(
+      400,
+      {
+        message:
+          'server 参数不合法'
+      }
+    )
   }
 
   if (
@@ -446,20 +551,26 @@ export default async (c) => {
       'pic'
     ].includes(type)
   ) {
-    throw new HTTPException(400, {
-      message:
-        'type 参数不合法'
-    })
+    throw new HTTPException(
+      400,
+      {
+        message:
+          'type 参数不合法'
+      }
+    )
   }
 
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // 鉴权
-  // ----------------------------------------------------------
+  // ==========================================================
 
   if (
-    ['lrc', 'url', 'pic']
-      .includes(type)
+    [
+      'lrc',
+      'url',
+      'pic'
+    ].includes(type)
   ) {
     if (
       auth(
@@ -469,22 +580,27 @@ export default async (c) => {
         token
       ) !== authToken
     ) {
-      throw new HTTPException(401, {
-        message:
-          '鉴权失败,非法调用'
-      })
+      throw new HTTPException(
+        401,
+        {
+          message:
+            '鉴权失败,非法调用'
+        }
+      )
     }
   }
 
 
-  // ----------------------------------------------------------
-  // 获取 QQ Cookie
-  // ----------------------------------------------------------
+  // ==========================================================
+  // 读取 Cookie
+  // ==========================================================
 
   let cookie = ''
 
   const referrer =
-    c.req.header('referer')
+    c.req.header(
+      'referer'
+    )
 
   if (
     isAllowedHost(
@@ -501,22 +617,24 @@ export default async (c) => {
 
 
   // ==========================================================
-  // QQ 音乐特殊处理
+  // QQ Music：搜索
   // ==========================================================
 
   if (
     server === 'tencent' &&
     type === 'search'
   ) {
-    try {
-      const cacheKey =
-        `tencent/search/${id}`
+    const cacheKey =
+      `tencent/search/${id}`
 
-      let data =
-        cache.get(cacheKey)
+    let result =
+      cache.get(cacheKey)
 
-      if (data === undefined) {
-        data =
+    if (
+      result === undefined
+    ) {
+      try {
+        result =
           await tencentSearch(
             id,
             cookie
@@ -524,54 +642,59 @@ export default async (c) => {
 
         cache.set(
           cacheKey,
-          data,
+          result,
           {
-            ttl: 1000 * 60 * 10
+            ttl:
+              1000 * 60 * 5
+          }
+        )
+      } catch (error) {
+        console.error(
+          'Tencent search error:',
+          error
+        )
+
+        throw new HTTPException(
+          502,
+          {
+            message:
+              `QQ音乐搜索失败：${
+                error?.message ||
+                '未知错误'
+              }`
           }
         )
       }
-
-      return c.json(
-        formatTencentSearchResult(
-          data,
-          baseUrl,
-          token
-        )
-      )
-
-    } catch (error) {
-      console.error(
-        'Tencent search error:',
-        error
-      )
-
-      throw new HTTPException(
-        502,
-        {
-          message:
-            `QQ音乐搜索失败：${error?.message || '未知错误'}`
-        }
-      )
     }
+
+    return c.json(
+      formatTencentSearchResult(
+        result,
+        baseUrl,
+        token
+      )
+    )
   }
 
 
   // ==========================================================
-  // QQ 音乐新版播放地址
+  // QQ Music：播放地址
   // ==========================================================
 
   if (
     server === 'tencent' &&
     type === 'url'
   ) {
-    try {
-      const cacheKey =
-        `tencent/url/${id}`
+    const cacheKey =
+      `tencent/url/${id}`
 
-      let url =
-        cache.get(cacheKey)
+    let url =
+      cache.get(cacheKey)
 
-      if (url === undefined) {
+    if (
+      url === undefined
+    ) {
+      try {
         url =
           await tencentUrl(
             id,
@@ -588,32 +711,35 @@ export default async (c) => {
           cacheKey,
           url,
           {
-            ttl: 1000 * 60 * 10
+            ttl:
+              1000 * 60 * 5
+          }
+        )
+      } catch (error) {
+        console.error(
+          'Tencent URL error:',
+          error
+        )
+
+        throw new HTTPException(
+          404,
+          {
+            message:
+              `QQ音乐播放地址获取失败：${
+                error?.message ||
+                '未知错误'
+              }`
           }
         )
       }
-
-      return c.redirect(url)
-
-    } catch (error) {
-      console.error(
-        'Tencent URL error:',
-        error
-      )
-
-      throw new HTTPException(
-        404,
-        {
-          message:
-            `QQ音乐播放地址获取失败：${error?.message || '未知错误'}`
-        }
-      )
     }
+
+    return c.redirect(url)
   }
 
 
   // ==========================================================
-  // 其他功能继续使用 @meting/core
+  // 其他平台继续使用 Meting
   // ==========================================================
 
   const cacheKey =
@@ -622,8 +748,9 @@ export default async (c) => {
   let data =
     cache.get(cacheKey)
 
-  if (data === undefined) {
-
+  if (
+    data === undefined
+  ) {
     c.header(
       'x-cache',
       'miss'
@@ -643,10 +770,10 @@ export default async (c) => {
     // 配置 Cookie
     // --------------------------------------------------------
 
-    if (
-      cookie
-    ) {
-      meting.cookie(cookie)
+    if (cookie) {
+      meting.cookie(
+        cookie
+      )
     }
 
 
@@ -657,11 +784,13 @@ export default async (c) => {
 
     try {
       response =
-        await meting[method](id)
-
+        await meting[method](
+          id
+        )
     } catch (error) {
-
-      console.error(error)
+      console.error(
+        error
+      )
 
       throw new HTTPException(
         500,
@@ -675,10 +804,10 @@ export default async (c) => {
 
     try {
       data =
-        JSON.parse(response)
-
+        JSON.parse(
+          response
+        )
     } catch (error) {
-
       throw new HTTPException(
         500,
         {
@@ -687,7 +816,6 @@ export default async (c) => {
         }
       )
     }
-
 
     cache.set(
       cacheKey,
@@ -709,7 +837,6 @@ export default async (c) => {
   if (
     type === 'url'
   ) {
-
     let url =
       data.url
 
@@ -720,10 +847,14 @@ export default async (c) => {
       )
     }
 
+
+    // --------------------------------------------------------
+    // 网易云
+    // --------------------------------------------------------
+
     if (
       server === 'netease'
     ) {
-
       url =
         url
           .replace(
@@ -740,7 +871,9 @@ export default async (c) => {
           )
 
       if (
-        url.includes('vuutv=')
+        url.includes(
+          'vuutv='
+        )
       ) {
         const tempUrl =
           new URL(url)
@@ -753,18 +886,43 @@ export default async (c) => {
     }
 
 
+    // --------------------------------------------------------
+    // QQ Music
+    // --------------------------------------------------------
+
     if (
-      server === 'baidu'
+      server === 'tencent'
     ) {
       url =
         url
           .replace(
-            'http://zhangmenshiting.qianqian.com',
-            'https://gss3.baidu.com/y0s1hSulBw92lNKgpU_Z2jR7b2w6buu'
+            'http://',
+            'https://'
+          )
+          .replace(
+            '://ws.stream.qqmusic.qq.com',
+            '://dl.stream.qqmusic.qq.com'
           )
     }
 
-    return c.redirect(url)
+
+    // --------------------------------------------------------
+    // 百度
+    // --------------------------------------------------------
+
+    if (
+      server === 'baidu'
+    ) {
+      url =
+        url.replace(
+          'http://zhangmenshiting.qianqian.com',
+          'https://gss3.baidu.com/y0s1hSulBw92lNKgpU_Z2jR7b2w6buu'
+        )
+    }
+
+    return c.redirect(
+      url
+    )
   }
 
 
@@ -775,7 +933,6 @@ export default async (c) => {
   if (
     type === 'pic'
   ) {
-
     const url =
       data.url
 
@@ -786,7 +943,9 @@ export default async (c) => {
       )
     }
 
-    return c.redirect(url)
+    return c.redirect(
+      url
+    )
   }
 
 
@@ -797,7 +956,6 @@ export default async (c) => {
   if (
     type === 'lrc'
   ) {
-
     return c.text(
       lyricFormat(
         data.lyric,
@@ -812,15 +970,19 @@ export default async (c) => {
   // ==========================================================
 
   return c.json(
-    data.map((x) => {
-
+    data.map(x => {
       return {
-
         title:
           x.name,
 
         author:
-          x.artist.join(' / '),
+          Array.isArray(
+            x.artist
+          )
+            ? x.artist.join(
+                ' / '
+              )
+            : x.artist || '',
 
         url:
           `${baseUrl}/api?server=${server}&type=url&id=${encodeURIComponent(x.url_id)}&auth=${auth(
@@ -852,7 +1014,7 @@ export default async (c) => {
 
 
 // ============================================================
-// HMAC-SHA1 鉴权
+// HMAC-SHA1
 // ============================================================
 
 const auth = (
@@ -861,7 +1023,6 @@ const auth = (
   id,
   token
 ) => {
-
   return hashjs
     .hmac(
       hashjs.sha1,
@@ -870,5 +1031,7 @@ const auth = (
     .update(
       `${server}${type}${id}`
     )
-    .digest('hex')
+    .digest(
+      'hex'
+    )
 }
